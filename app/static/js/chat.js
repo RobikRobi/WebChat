@@ -1,180 +1,128 @@
-// Сохраняем текущий выбранный userId и WebSocket соединение
-let selectedUserId = null;
-let socket = null;
-let messagePollingInterval = null;
+let currentChat = null;
+let users = [];
+let messages = {};
 
-// Функция выхода из аккаунта
 async function logout() {
     try {
         const response = await fetch('/auth/logout', {
             method: 'POST',
-            credentials: 'include'
+            headers: {
+                'Content-Type': 'application/json'
+            }
         });
-
+        
         if (response.ok) {
             window.location.href = '/auth';
         } else {
-            console.error('Ошибка при выходе');
+            console.error('Logout failed');
         }
     } catch (error) {
-        console.error('Ошибка при выполнении запроса:', error);
+        console.error('Error during logout:', error);
     }
 }
 
-// Функция выбора пользователя
-async function selectUser(userId, userName, event) {
-    selectedUserId = userId;
-    document.getElementById('chatHeader').innerHTML = `<span>Чат с ${userName}</span><button class="logout-button" id="logoutButton">Выход</button>`;
-    document.getElementById('messageInput').disabled = false;
-    document.getElementById('sendButton').disabled = false;
-
-    document.querySelectorAll('.user-item').forEach(item => item.classList.remove('active'));
-    event.target.classList.add('active');
-
-    const messagesContainer = document.getElementById('messages');
-    messagesContainer.innerHTML = '';
-    messagesContainer.style.display = 'block';
-
-    document.getElementById('logoutButton').onclick = logout;
-
-    await loadMessages(userId);
-    connectWebSocket();
-    startMessagePolling(userId);
+async function loadUsers() {
+    try {
+        const response = await fetch('/api/users');
+        users = await response.json();
+        displayUsers();
+    } catch (error) {
+        console.error('Error loading users:', error);
+    }
 }
 
-// Загрузка сообщений
+function displayUsers() {
+    const usersList = document.getElementById('usersList');
+    usersList.innerHTML = users.map(user => `
+        <div class="user-item" onclick="selectChat('${user.id}', '${user.name}')">
+            ${user.name}
+        </div>
+    `).join('');
+}
+
+function selectChat(userId, userName) {
+    currentChat = userId;
+    
+    // Update UI
+    document.querySelectorAll('.user-item').forEach(item => {
+        item.classList.remove('active');
+        if(item.textContent.trim() === userName) {
+            item.classList.add('active');
+        }
+    });
+    
+    // Set up chat area
+    const chatArea = document.getElementById('chatArea');
+    chatArea.innerHTML = document.getElementById('chatTemplate').innerHTML;
+    
+    // Set chat header
+    document.getElementById('chatUserName').textContent = userName;
+    
+    // Load messages
+    loadMessages(userId);
+}
+
 async function loadMessages(userId) {
     try {
-        const response = await fetch(`/chat/messages/${userId}`);
-        const messages = await response.json();
-
-        const messagesContainer = document.getElementById('messages');
-        messagesContainer.innerHTML = messages.map(message =>
-            createMessageElement(message.content, message.recipient_id)
-        ).join('');
+        const response = await fetch(`/api/messages/${userId}`);
+        messages[userId] = await response.json();
+        displayMessages();
     } catch (error) {
-        console.error('Ошибка загрузки сообщений:', error);
+        console.error('Error loading messages:', error);
     }
 }
 
-// Подключение WebSocket
-function connectWebSocket() {
-    if (socket) socket.close();
-
-    socket = new WebSocket(`wss://${window.location.host}/chat/ws/${selectedUserId}`);
-
-    socket.onopen = () => console.log('WebSocket соединение установлено');
-
-    socket.onmessage = (event) => {
-        const incomingMessage = JSON.parse(event.data);
-        if (incomingMessage.recipient_id === selectedUserId) {
-            addMessage(incomingMessage.content, incomingMessage.recipient_id);
-        }
-    };
-
-    socket.onclose = () => console.log('WebSocket соединение закрыто');
+function displayMessages() {
+    if (!currentChat) return;
+    
+    const container = document.getElementById('messagesContainer');
+    container.innerHTML = messages[currentChat].map(msg => `
+        <div class="message ${msg.sent ? 'sent' : 'received'}">
+            ${msg.text}
+        </div>
+    `).join('');
+    
+    container.scrollTop = container.scrollHeight;
 }
 
-// Отправка сообщения
 async function sendMessage() {
-    const messageInput = document.getElementById('messageInput');
-    const message = messageInput.value.trim();
-
-    if (message && selectedUserId) {
-        const payload = {recipient_id: selectedUserId, content: message};
-
-        try {
-            await fetch('/chat/messages', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(payload)
-            });
-
-            socket.send(JSON.stringify(payload));
-            addMessage(message, selectedUserId);
-            messageInput.value = '';
-        } catch (error) {
-            console.error('Ошибка при отправке сообщения:', error);
-        }
-    }
-}
-
-// Добавление сообщения в чат
-function addMessage(text, recipient_id) {
-    const messagesContainer = document.getElementById('messages');
-    messagesContainer.insertAdjacentHTML('beforeend', createMessageElement(text, recipient_id));
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
-}
-
-// Создание HTML элемента сообщения
-function createMessageElement(text, recipient_id) {
-    const userID = parseInt(selectedUserId, 10);
-    const messageClass = userID === recipient_id ? 'my-message' : 'other-message';
-    return `<div class="message ${messageClass}">${text}</div>`;
-}
-
-// Запуск опроса новых сообщений
-function startMessagePolling(userId) {
-    clearInterval(messagePollingInterval);
-    messagePollingInterval = setInterval(() => loadMessages(userId), 1000);
-}
-
-// Обработка нажатий на пользователя
-function addUserClickListeners() {
-    document.querySelectorAll('.user-item').forEach(item => {
-        item.onclick = event => selectUser(item.getAttribute('data-user-id'), item.textContent, event);
-    });
-}
-
-// Первоначальная настройка событий нажатия на пользователей
-addUserClickListeners();
-
-// Обновление списка пользователей
-async function fetchUsers() {
+    if (!currentChat) return;
+    
+    const input = document.getElementById('messageInput');
+    const message = input.value.trim();
+    
+    if (!message) return;
+    
     try {
-        const response = await fetch('/auth/users');
-        const users = await response.json();
-        const userList = document.getElementById('userList');
-
-        // Очищаем текущий список пользователей
-        userList.innerHTML = '';
-
-        // Создаем элемент "Избранное" для текущего пользователя
-        const favoriteElement = document.createElement('div');
-        favoriteElement.classList.add('user-item');
-        favoriteElement.setAttribute('data-user-id', currentUserId);
-        favoriteElement.textContent = 'Избранное';
-
-        // Добавляем "Избранное" в начало списка
-        userList.appendChild(favoriteElement);
-
-        // Генерация списка остальных пользователей
-        users.forEach(user => {
-            if (user.id !== currentUserId) {
-                const userElement = document.createElement('div');
-                userElement.classList.add('user-item');
-                userElement.setAttribute('data-user-id', user.id);
-                userElement.textContent = user.name;
-                userList.appendChild(userElement);
-            }
+        const response = await fetch('/api/messages', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                receiverId: currentChat,
+                text: message
+            })
         });
-
-        // Повторно добавляем обработчики событий для каждого пользователя
-        addUserClickListeners();
+        
+        if (response.ok) {
+            input.value = '';
+            await loadMessages(currentChat);
+        }
     } catch (error) {
-        console.error('Ошибка при загрузке списка пользователей:', error);
+        console.error('Error sending message:', error);
     }
 }
 
-
-document.addEventListener('DOMContentLoaded', fetchUsers);
-setInterval(fetchUsers, 10000); // Обновление каждые 10 секунд
-
-// Обработчики для кнопки отправки и ввода сообщения
-document.getElementById('sendButton').onclick = sendMessage;
-
-document.getElementById('messageInput').onkeypress = async (e) => {
-    if (e.key === 'Enter') {
-        await sendMessage();
-    }
-};
+// Initialize
+document.addEventListener('DOMContentLoaded', () => {
+    loadUsers();
+    
+    // Add enter key handler for message input
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey && document.activeElement.id === 'messageInput') {
+            e.preventDefault();
+            sendMessage();
+        }
+    });
+});

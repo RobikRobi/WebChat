@@ -1,83 +1,87 @@
-// Обработка кликов по вкладкам
-document.querySelectorAll('.tab').forEach(tab => {
-    tab.addEventListener('click', () => showTab(tab.dataset.tab));
-});
 
-// Функция отображения выбранной вкладки
-function showTab(tabName) {
-    document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
-    document.querySelectorAll('.form').forEach(form => form.classList.remove('active'));
-
-    document.querySelector(`.tab[data-tab="${tabName}"]`).classList.add('active');
-    document.getElementById(`${tabName}Form`).classList.add('active');
+function switchTab(tab) {
+    // Remove active class from all tabs and contents
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
+    
+    // Add active class to selected tab and content
+    if (tab === 'login') {
+        document.querySelector('.tab:first-child').classList.add('active');
+        document.getElementById('login').classList.add('active');
+    } else {
+        document.querySelector('.tab:last-child').classList.add('active');
+        document.getElementById('register').classList.add('active');
+    }
 }
 
-// Функция для валидации данных формы
-const validateForm = fields => fields.every(field => field.trim() !== '');
-
-// Функция для отправки запросов
-const sendRequest = async (url, data) => {
+async function handleLogin(event) {
+    event.preventDefault();
+    
+    const email = document.getElementById('loginEmail').value;
+    const password = document.getElementById('loginPassword').value;
+    
     try {
-        const response = await fetch(url, {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify(data)
+        const response = await fetch('/api/login', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ email, password })
         });
-
-        const result = await response.json();
-
+        
+        const data = await response.json();
+        
         if (response.ok) {
-            alert(result.message || 'Операция выполнена успешно!');
-            return result;
+            // Redirect to chat or handle successful login
+            window.location.href = '/chat';
         } else {
-            alert(result.message || 'Ошибка выполнения запроса!');
-            return null;
+            // Show error message
+            document.getElementById('loginEmailError').textContent = data.message;
+            document.getElementById('loginEmailError').style.display = 'block';
         }
     } catch (error) {
-        console.error("Ошибка:", error);
-        alert('Произошла ошибка на сервере');
+        console.error('Error:', error);
     }
-};
+}
 
-// Функция для обработки формы
-const handleFormSubmit = async (formType, url, fields) => {
-    if (!validateForm(fields)) {
-        alert('Пожалуйста, заполните все поля.');
+async function handleRegister(event) {
+    event.preventDefault();
+    
+    const email = document.getElementById('registerEmail').value;
+    const name = document.getElementById('registerName').value;
+    const password = document.getElementById('registerPassword').value;
+    const passwordConfirm = document.getElementById('registerPasswordConfirm').value;
+    
+    // Reset error messages
+    document.querySelectorAll('.error').forEach(e => e.style.display = 'none');
+    
+    // Validate passwords match
+    if (password !== passwordConfirm) {
+        document.getElementById('registerPasswordConfirmError').textContent = 'Пароли не совпадают';
+        document.getElementById('registerPasswordConfirmError').style.display = 'block';
         return;
     }
-
-    const data = await sendRequest(url, formType === 'login'
-        ? {email: fields[0], password: fields[1]}
-        : {email: fields[0], name: fields[1], password: fields[2], password_check: fields[3]});
-
-    if (data && formType === 'login') {
-        window.location.href = '/chat';
+    
+    try {
+        const response = await fetch('/api/register', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ email, name, password })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            // Redirect to login tab or handle successful registration
+            switchTab('login');
+        } else {
+            // Show error message
+            document.getElementById('registerEmailError').textContent = data.message;
+            document.getElementById('registerEmailError').style.display = 'block';
+        }
+    } catch (error) {
+        console.error('Error:', error);
     }
-};
-
-// Обработка формы входа
-document.getElementById('loginButton').addEventListener('click', async (event) => {
-    event.preventDefault();
-
-    const email = document.querySelector('#loginForm input[type="email"]').value;
-    const password = document.querySelector('#loginForm input[type="password"]').value;
-
-    await handleFormSubmit('login', 'login/', [email, password]);
-});
-
-// Обработка формы регистрации
-document.getElementById('registerButton').addEventListener('click', async (event) => {
-    event.preventDefault();
-
-    const email = document.querySelector('#registerForm input[type="email"]').value;
-    const name = document.querySelector('#registerForm input[type="text"]').value;
-    const password = document.querySelectorAll('#registerForm input[type="password"]')[0].value;
-    const password_check = document.querySelectorAll('#registerForm input[type="password"]')[1].value;
-
-    if (password !== password_check) {
-        alert('Пароли не совпадают.');
-        return;
-    }
-
-    await handleFormSubmit('register', 'register/', [email, name, password, password_check]);
-});
+}
